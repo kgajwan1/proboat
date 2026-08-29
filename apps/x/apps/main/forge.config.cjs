@@ -221,16 +221,16 @@ module.exports = {
         onlyModules: [],
     },
     packagerConfig: {
-        executableName: 'rowboat',
+        executableName: 'proboat',
         icon: './icons/icon',  // .icns extension added automatically
-        appBundleId: 'com.rowboat.app',
+        appBundleId: 'com.proboat.app',
         appCategoryType: 'public.app-category.productivity',
         protocols: [
-            { name: 'Rowboat', schemes: ['rowboat'] },
+            { name: 'ProBoat', schemes: ['proboat', 'rowboat'] },
         ],
         extendInfo: {
-            NSAudioCaptureUsageDescription: 'Rowboat needs access to system audio to transcribe meetings from other apps (Zoom, Meet, etc.)',
-            NSCameraUsageDescription: 'Rowboat uses your camera in video chat mode so the assistant can see you and give feedback (e.g. pitch practice).',
+            NSAudioCaptureUsageDescription: 'ProBoat needs access to system audio to transcribe meetings from other apps (Zoom, Meet, etc.)',
+            NSCameraUsageDescription: 'ProBoat uses your camera in video chat mode so the assistant can see you and give feedback (e.g. pitch practice).',
         },
         // Signs the packaged app's executables (rowboat.exe etc.); the Squirrel
         // maker below separately signs the installer it produces.
@@ -272,7 +272,7 @@ module.exports = {
             name: '@electron-forge/maker-dmg',
             config: (arch) => ({
                 format: 'ULFO',
-                name: `Rowboat-darwin-${arch}-${pkg.version}`,  // Architecture-specific name to avoid conflicts
+                name: `ProBoat-darwin-${arch}-${pkg.version}`,  // Architecture-specific name to avoid conflicts
             })
         },
         {
@@ -280,8 +280,8 @@ module.exports = {
             config: (arch) => ({
                 authors: 'rowboatlabs',
                 description: 'AI coworker with memory',
-                name: `Rowboat-win32-${arch}`,
-                setupExe: `Rowboat-win32-${arch}-${pkg.version}-setup.exe`,
+                name: `ProBoat-win32-${arch}`,
+                setupExe: `ProBoat-win32-${arch}-${pkg.version}-setup.exe`,
                 setupIcon: path.join(__dirname, 'icons/icon.ico'),
                 // The animation is Squirrel's ONLY install UI — without this
                 // users stare at Squirrel's unbranded default mid-install.
@@ -302,13 +302,13 @@ module.exports = {
             name: '@electron-forge/maker-deb',
             config: (arch) => ({
                 options: {
-                    name: `Rowboat-linux`,
-                    bin: "rowboat",
+                    name: `ProBoat-linux`,
+                    bin: "proboat",
                     description: 'AI coworker with memory',
                     maintainer: 'rowboatlabs',
                     homepage: 'https://rowboatlabs.com',
                     icon: path.join(__dirname, 'icons/icon.png'),
-                    mimeType: ['x-scheme-handler/rowboat'],
+                    mimeType: ['x-scheme-handler/proboat'],
                 }
             })
         },
@@ -316,12 +316,12 @@ module.exports = {
             name: '@electron-forge/maker-rpm',
             config: {
                 options: {
-                    name: `Rowboat-linux`,
-                    bin: "rowboat",
+                    name: `ProBoat-linux`,
+                    bin: "proboat",
                     description: 'AI coworker with memory',
                     homepage: 'https://rowboatlabs.com',
                     icon: path.join(__dirname, 'icons/icon.png'),
-                    mimeType: ['x-scheme-handler/rowboat'],
+                    mimeType: ['x-scheme-handler/proboat'],
                 }
             }
         },
@@ -330,9 +330,9 @@ module.exports = {
             name: require.resolve('./makers/maker-pacman.cjs'),
             platforms: ['linux'],
             config: {
-                name: 'rowboat',
-                bin: 'rowboat',
-                executableName: 'rowboat',
+                name: 'proboat',
+                bin: 'proboat',
+                executableName: 'proboat',
                 description: 'AI coworker with memory',
                 maintainer: 'rowboatlabs',
                 homepage: 'https://rowboatlabs.com',

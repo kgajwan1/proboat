@@ -3,9 +3,13 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { WorkDir } from "@x/core/dist/config/config.js";
 
-export const DEEP_LINK_SCHEME = "rowboat";
-const URL_PREFIX = `${DEEP_LINK_SCHEME}://`;
+export const DEEP_LINK_SCHEME = "proboat";
+const URL_PREFIXES = [`${DEEP_LINK_SCHEME}://`, "rowboat://"];
 const ACTION_HOST = "action";
+
+function deepLinkPrefix(url: string): string | undefined {
+    return URL_PREFIXES.find((prefix) => url.startsWith(prefix));
+}
 
 let pendingUrl: string | null = null;
 let mainWindowRef: BrowserWindow | null = null;
@@ -22,13 +26,13 @@ export function consumePendingDeepLink(): string | null {
 
 export function extractDeepLinkFromArgv(argv: readonly string[]): string | null {
     for (const arg of argv) {
-        if (typeof arg === "string" && arg.startsWith(URL_PREFIX)) return arg;
+        if (typeof arg === "string" && deepLinkPrefix(arg)) return arg;
     }
     return null;
 }
 
 /**
- * Dispatch any rowboat:// URL — chooses among action / oauth-completion /
+ * Dispatch any ProBoat URL — chooses among action / oauth-completion /
  * navigation automatically. Use this from notification click handlers and
  * other URL entry points.
  *
@@ -49,7 +53,7 @@ export function dispatchUrl(url: string): void {
 }
 
 export function dispatchDeepLink(url: string): void {
-    if (!url.startsWith(URL_PREFIX)) return;
+    if (!deepLinkPrefix(url)) return;
 
     pendingUrl = url;
 
@@ -71,8 +75,9 @@ interface MeetingNotesAction {
 type ParsedAction = MeetingNotesAction;
 
 function parseAction(url: string): ParsedAction | null {
-    if (!url.startsWith(URL_PREFIX)) return null;
-    const rest = url.slice(URL_PREFIX.length);
+    const prefix = deepLinkPrefix(url);
+    if (!prefix) return null;
+    const rest = url.slice(prefix.length);
     const queryIdx = rest.indexOf("?");
     const host = (queryIdx >= 0 ? rest.slice(0, queryIdx) : rest).replace(/\/$/, "");
     if (host !== ACTION_HOST) return null;
@@ -133,8 +138,9 @@ interface OAuthCompletion {
  * or a missing `session` query param.
  */
 function parseOAuthCompletion(url: string): OAuthCompletion | null {
-    if (!url.startsWith(URL_PREFIX)) return null;
-    const rest = url.slice(URL_PREFIX.length);
+    const prefix = deepLinkPrefix(url);
+    if (!prefix) return null;
+    const rest = url.slice(prefix.length);
     const queryIdx = rest.indexOf("?");
     const path = queryIdx >= 0 ? rest.slice(0, queryIdx) : rest;
     const parts = path.split("/").filter(Boolean);
@@ -171,8 +177,9 @@ interface PickerCompletion {
  * connect completion above (oauth/google/done) by the extra `picker` segment.
  */
 function parsePickerCompletion(url: string): PickerCompletion | null {
-    if (!url.startsWith(URL_PREFIX)) return null;
-    const rest = url.slice(URL_PREFIX.length);
+    const prefix = deepLinkPrefix(url);
+    if (!prefix) return null;
+    const rest = url.slice(prefix.length);
     const queryIdx = rest.indexOf("?");
     const path = queryIdx >= 0 ? rest.slice(0, queryIdx) : rest;
     const parts = path.split("/").filter(Boolean);

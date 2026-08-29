@@ -1,6 +1,6 @@
 {
-    "name": "rowboat",
-    "productName": "Rowboat",
+    "name": "proboat",
+    "productName": "ProBoat",
     "description": "AI coworker with memory",
     "type": "module",
     "version": "0.1.0",
