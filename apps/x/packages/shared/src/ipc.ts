@@ -40,7 +40,8 @@ import {
     type SpacesManageTopicAction,
     type SpacesPostResult,
     type SpacesProposeInput,
-    type SpacesTopicWithMessages,
+    type SpacesStreamPage,
+    type SpacesThreadPage,
 } from './spaces.js';
 import type * as SpacesTypes from './spaces.js';
 
@@ -136,7 +137,7 @@ const UpdaterStatusSchema = z.object({
   lastCheckedAt: z.number().optional(),
 });
 
-const ipcSchemas = {
+export const ipcSchemas = {
   'app:getVersions': {
     req: z.null(),
     res: z.object({
@@ -1209,6 +1210,20 @@ const ipcSchemas = {
     req: z.null(),
     res: z.null(),
   },
+  // The ⌥/⌃+Tab section switcher, forwarded from the main process when an
+  // embedded page (e.g. the browser <webview>) holds keyboard focus — its
+  // keystrokes go to the guest and never reach the app renderer's listeners.
+  'shortcuts:switcherKey': {
+    req: z.object({
+      type: z.enum(['keyDown', 'keyUp']),
+      key: z.string(),
+      code: z.string(),
+      alt: z.boolean(),
+      control: z.boolean(),
+      shift: z.boolean(),
+    }),
+    res: z.null(),
+  },
   // Launch-at-login (resident app). The OS login-item registry is the source
   // of truth; these read/write it directly rather than a config file.
   'app:getLoginItemSettings': {
@@ -1263,14 +1278,15 @@ const ipcSchemas = {
       success: z.literal(true),
     }),
   },
-  // --- Global push-to-talk (Right ⌘) ---
+  // --- Global push-to-talk (right ⌘ on macOS, right Ctrl elsewhere —
+  // see ptt-key.ts) ---
   // Push channel: main → app window, a system-wide PTT key transition.
-  // 'chord' = another key/click while Right ⌘ was held (it's being used as a
+  // 'chord' = another key/click while the talk key was held (it's being used as a
   // modifier, not the talk key) — the renderer cancels the capture.
   'voice:ptt-key': {
     req: z.object({
       type: z.enum(['down', 'up', 'chord']),
-      // Ghostwriter chord (⇧ held when Right ⌘ went down): this capture's
+      // Ghostwriter chord (⇧ held when the talk key went down): this capture's
       // result should be pasted at the user's cursor.
       paste: z.boolean().optional(),
     }),
@@ -1444,6 +1460,15 @@ const ipcSchemas = {
     req: z.object({ x: z.number(), y: z.number() }),
     res: z.null(),
   },
+  // Main → companion: the window is being dragged right now. A drag region
+  // is a NATIVE affair — on Windows the hit test answers HTCAPTION, on macOS
+  // it is a view layered over the page — so the renderer never sees the
+  // mousedown and `:active` never fires. Main watches its own 'move' instead
+  // and says so, which is what lets the cursor go from grab to grabbing.
+  'quick-ask:dragging': {
+    req: z.object({ dragging: z.boolean() }),
+    res: z.null(),
+  },
   // (The old quickAsk:setTextMode / quick-ask:text-mode channels are gone:
   // whether a reply is SPOKEN now follows the question's modality — spoken
   // questions get spoken replies, typed ones stay silent — plus the
@@ -1528,6 +1553,25 @@ const ipcSchemas = {
   // hold-to-talk chord detection all follow the one source of truth.
   'quick-ask:shortcut-changed': {
     req: z.object({ accelerator: z.string(), registered: z.boolean() }),
+    res: z.null(),
+  },
+  // --- Theme, across windows ---
+  // The setting itself lives in the renderer's localStorage, which every
+  // window already shares (one origin, one Electron session), so a freshly
+  // loaded utility window paints the right skin with no round trip. These
+  // channels carry only the *changes*: utility windows have no ThemeProvider,
+  // and a localStorage write in the app window raises no cross-window event
+  // they can rely on, so the app window tells main and main tells them.
+  // The raw setting travels, not the resolved one — 'system' must resolve
+  // per window, against that window's own matchMedia.
+  // App window → main, on mount and on every change.
+  'theme:set': {
+    req: z.object({ theme: z.enum(['light', 'dark', 'system']) }),
+    res: z.object({}),
+  },
+  // Push: main → every OTHER window.
+  'theme:changed': {
+    req: z.object({ theme: z.enum(['light', 'dark', 'system']) }),
     res: z.null(),
   },
   // --- Ambient meeting detection popup (own always-on-top window) ---
@@ -1666,7 +1710,9 @@ const ipcSchemas = {
       projectId: z.string(),
       title: z.string().optional(),
       agent: CodingAgent,
-      policy: ApprovalPolicy,
+      // Only an explicit user choice; a quick-created session omits it and
+      // follows the composer chip / global setting ("Auto").
+      policy: ApprovalPolicy.optional(),
       isolation: z.enum(['in-repo', 'worktree']),
       // The coding agent's own model + reasoning effort (ACP engine),
       // re-applied each turn so they stay editable. The copilot LLM is
@@ -1699,6 +1745,12 @@ const ipcSchemas = {
   'codeMode:listModelOptions': {
     req: z.object({ agent: CodingAgent }),
     res: CodeAgentModelOptions,
+  },
+  // Done is a flag, not a lifecycle change: the worktree, branch and chat are
+  // untouched. `done: false` reopens.
+  'codeSession:setDone': {
+    req: z.object({ sessionId: z.string(), done: z.boolean() }),
+    res: z.object({ session: CodeSession }),
   },
   'codeSession:delete': {
     req: z.object({
@@ -3482,6 +3534,69 @@ const ipcSchemas = {
       chatDays: z.number().nullable(),
     }),
   },
+  // Rowboat server (phone pairing) channels — client-local: answered by main,
+  // which hosts the HTTP/WS transport for external clients.
+  'server:getPairingInfo': {
+    req: z.null(),
+    res: z.object({
+      running: z.boolean(),
+      // Hostname shown on the phone during pairing.
+      name: z.string(),
+      port: z.number().nullable(),
+      lanEnabled: z.boolean(),
+      // Reachable base URLs, loopback first; LAN/Tailscale entries only when
+      // lanEnabled.
+      urls: z.array(z.string()),
+      token: z.string().nullable(),
+    }),
+  },
+  'server:setLanEnabled': {
+    req: z.object({ enabled: z.boolean() }),
+    res: z.object({
+      success: z.literal(true),
+    }),
+  },
+  // Mints a new server key and rebinds — every paired phone is revoked and
+  // must re-pair. This is the recovery path for a leaked QR/token.
+  'server:rotateKey': {
+    req: z.null(),
+    res: z.object({
+      success: z.literal(true),
+    }),
+  },
+  // Remote-server connection (client-local, never forwarded): where this
+  // desktop's client points — the local child by default, or a remote
+  // rowboat-server saved from Settings. Env vars override and lock the UI.
+  'server:getConnection': {
+    req: z.null(),
+    res: z.object({
+      mode: z.enum(['in-process', 'child', 'remote']),
+      url: z.string().nullable(),
+      fromEnv: z.boolean(),
+    }),
+  },
+  'server:connectRemote': {
+    req: z.object({ url: z.string(), token: z.string() }),
+    res: z.object({ success: z.boolean(), error: z.string().optional() }),
+  },
+  'server:disconnectRemote': {
+    req: z.null(),
+    res: z.object({ success: z.boolean(), error: z.string().optional() }),
+  },
+  // OAuth loopback relay (Phase 8b): a loopback-capable client hosting the
+  // 127.0.0.1 callback listener for a remote server ships each callback hit
+  // here; the response says which page to render in the browser tab. Called
+  // by the client's relay listener, never by the renderer.
+  'oauth:deliverLoopbackCallback': {
+    req: z.object({
+      bindingId: z.string(),
+      url: z.string(),
+    }),
+    res: z.object({
+      accepted: z.boolean(),
+      message: z.string().optional(),
+    }),
+  },
 
   // ==========================================================================
   // Spaces — shared containers on orgs speaking the spaces protocol.
@@ -3627,30 +3742,73 @@ const ipcSchemas = {
     req: z.object({ orgId: z.string(), spaceId: z.string(), includeArchived: z.boolean().optional() }),
     res: z.object({ topics: z.array(z.custom<SpacesTypes.TopicListing>()) }),
   },
-  'spaces:listMessages': {
+  // Space search: categorized top-N (messages / topics / assets), served by
+  // the org's GET /v1/spaces/:spaceId/search. Snippets arrive raw — resolve
+  // mentions renderer-side like any message body.
+  'spaces:search': {
     req: z.object({
       orgId: z.string(),
       spaceId: z.string(),
-      topicId: z.string(),
-      /** Page back: only messages below this offset. Absent = the latest page. */
+      q: z.string(),
+      kinds: z.array(z.enum(['messages', 'topics', 'assets'])).optional(),
+      /** Per-category cap (org default 10, max 50). */
+      limit: z.number().optional(),
+    }),
+    res: z.custom<SpacesTypes.SearchResults>(),
+  },
+  // The space's one stream: ROOT messages only, windowed newest-first, with
+  // the topic rows annotating this page's roots riding along.
+  'spaces:listStream': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      /** Page back: only roots below this offset. Absent = the latest page. */
       beforeOffset: z.number().optional(),
       limit: z.number().optional(),
     }),
-    res: z.custom<SpacesTopicWithMessages>(),
+    res: z.custom<SpacesStreamPage>(),
+  },
+  // One flat thread: root + topic annotation (null = plain thread) + windowed
+  // replies. A reply id resolves to its root on the org.
+  'spaces:listThread': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      rootMessageId: z.string(),
+      beforeOffset: z.number().optional(),
+      limit: z.number().optional(),
+    }),
+    res: z.custom<SpacesThreadPage>(),
   },
   // actingMode is set by main ('direct' — the renderer is the human surface;
-  // agents write through the org's MCP face, never through IPC).
+  // agents write through the org's MCP face, never through IPC). Posting never
+  // creates a topic; threadRoot present = a reply, absent = a stream root.
   'spaces:postMessage': {
     req: z.object({
       orgId: z.string(),
       spaceId: z.string(),
-      topicId: z.string().optional(),
+      threadRoot: z.string().optional(),
       anchorChangeSetId: z.string().optional(),
-      anchorMessageId: z.string().optional(),
       body: z.string(),
+      /** Present = the message carries a poll; body must be its markdown fallback. */
+      poll: z.custom<SpacesTypes.SpacesNewPollInput>().optional(),
     }),
     res: z.custom<SpacesPostResult>(),
   },
+  // The deliberate ceremony: promote a thread (rootMessageId) or post a new
+  // root + annotate it (body) — exactly one of the two, org-enforced.
+  'spaces:createTopic': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      rootMessageId: z.string().optional(),
+      title: z.string(),
+      body: z.string().optional(),
+    }),
+    res: z.object({ topic: z.custom<SpacesTypes.Topic>(), rootMessage: z.custom<SpacesTypes.Message>() }),
+  },
+  // One-row lifecycle ops on the annotation ('remove' = convert back to
+  // thread; the conversation is untouched).
   'spaces:manageTopic': {
     req: z.object({
       orgId: z.string(),
@@ -3694,16 +3852,40 @@ const ipcSchemas = {
     }),
     res: z.object({ message: z.custom<SpacesTypes.Message>() }),
   },
-  // @rowboat in a topic (spec §8): the renderer detected an addressed message
-  // it just posted; main routes it into the topic's session (creating one on
-  // first use — the queue/steer machinery handles the rest). messageId is the
-  // posted feed message, stamped into the turn input as provenance.
+  // Poll vote toggle — reaction semantics on the org (idempotent; single-
+  // select add MOVES the member's vote); actingMode is stamped 'direct' by
+  // main, which is also the rule (agents cannot vote). Returns the message
+  // with the poll's votes folded.
+  'spaces:votePoll': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      messageId: z.string(),
+      answerId: z.number(),
+      action: z.enum(['add', 'remove']),
+    }),
+    res: z.object({ message: z.custom<SpacesTypes.Message>() }),
+  },
+  // End a poll early — author-only on the org; idempotent once closed.
+  'spaces:endPoll': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      messageId: z.string(),
+    }),
+    res: z.object({ message: z.custom<SpacesTypes.Message>() }),
+  },
+  // @rowboat in a thread (spec §8): the renderer detected an addressed message
+  // it just posted; main routes it into the thread's session (keyed on the
+  // permanent root message id, creating one on first use — the queue/steer
+  // machinery handles the rest). messageId is the posted feed message,
+  // stamped into the turn input as provenance.
   'spaces:invokeRowboat': {
     req: z.object({
       orgId: z.string(),
       spaceId: z.string(),
-      topicId: z.string(),
-      topicTitle: z.string(),
+      threadRootId: z.string(),
+      threadLabel: z.string(),
       spaceName: z.string(),
       messageId: z.string(),
       body: z.string(),
@@ -3720,10 +3902,10 @@ const ipcSchemas = {
     }),
     res: z.object({ sessionId: z.string(), queued: z.boolean() }),
   },
-  // The topic's session, if any — powers the invoker-only "open the turn"
+  // The thread's session, if any — powers the invoker-only "open the turn"
   // affordance on the presence chip.
   'spaces:topicSession': {
-    req: z.object({ orgId: z.string(), spaceId: z.string(), topicId: z.string() }),
+    req: z.object({ orgId: z.string(), spaceId: z.string(), threadRootId: z.string() }),
     res: z.object({ sessionId: z.string().nullable() }),
   },
   // Upload phase 1 (spec §6): bytes in, {hash, size, mime} out. Bytes travel
@@ -3734,7 +3916,9 @@ const ipcSchemas = {
     req: z.object({
       orgId: z.string(),
       spaceId: z.string(),
-      bytes: z.custom<ArrayBuffer>().optional(),
+      // Base64 — bytes must survive the JSON /rpc hop to the server (a raw
+      // ArrayBuffer stringifies to '{}' and uploads an empty blob).
+      bytes: z.string().optional(),
       filePath: z.string().optional(),
       /** Display filename (drives the markdown label / mime fallback); never storage. */
       name: z.string(),
@@ -3787,14 +3971,105 @@ const ipcSchemas = {
     req: z.object({ orgId: z.string(), spaceId: z.string() }),
     res: z.object({ success: z.literal(true) }),
   },
+  // Notification levels for the mention watcher: a space-wide level plus
+  // per-thread overrides. null = inherit (thread → space → the 'mentions'
+  // default). Stored main-side (the watcher runs there, screen or no screen).
+  // `topicId` is the thread's ROOT MESSAGE id, never a Topic row id: the
+  // watcher resolves a message to `threadRoot ?? id` and looks up by that.
+  'spaces:getNotifyPrefs': {
+    req: z.object({ orgId: z.string(), spaceId: z.string() }),
+    res: z.object({
+      spaceLevel: z.enum(['all', 'mentions', 'mute']).nullable(),
+      topics: z.record(z.string(), z.enum(['all', 'mentions', 'mute'])),
+    }),
+  },
+  'spaces:setNotifyPref': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      /** Absent = set the space-wide level. */
+      topicId: z.string().optional(),
+      /** null clears the override back to inherit. */
+      level: z.enum(['all', 'mentions', 'mute']).nullable(),
+    }),
+    res: z.object({ success: z.literal(true) }),
+  },
+  // Scheduled sends and reminders — the main-side queue (core scheduler).
+  // 'message' posts to the topic at `at`; 'reminder' notifies the member.
+  'spaces:schedule': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      /** The thread to post into; absent = the space's stream. */
+      threadRootId: z.string().optional(),
+      body: z.string(),
+      /** ISO instant to fire at. */
+      at: z.string().refine((s) => !Number.isNaN(Date.parse(s)), 'at must be an ISO instant'),
+      kind: z.enum(['message', 'reminder']),
+    }),
+    res: z.object({ id: z.string() }),
+  },
+  'spaces:listScheduled': {
+    req: z.object({ orgId: z.string(), spaceId: z.string() }),
+    res: z.object({
+      items: z.array(
+        z.object({
+          id: z.string(),
+          kind: z.enum(['message', 'reminder']),
+          orgId: z.string(),
+          spaceId: z.string(),
+          /** The thread the send targets; absent = the space's stream. */
+          threadRootId: z.string().optional(),
+          body: z.string(),
+          at: z.string(),
+          createdAt: z.string(),
+        }),
+      ),
+    }),
+  },
+  'spaces:cancelScheduled': {
+    req: z.object({ id: z.string() }),
+    res: z.object({ success: z.literal(true) }),
+  },
+  // Do-not-disturb: one global until-instant gating the mention watcher.
+  'spaces:getDnd': {
+    req: z.null(),
+    res: z.object({ until: z.string().nullable() }),
+  },
+  'spaces:setDnd': {
+    req: z.object({ until: z.string().nullable() }),
+    res: z.object({ success: z.literal(true) }),
+  },
   // Ephemeral presence from the human surface (viewing / typing / idle), scoped
-  // to a topic when set. agent_working is only ever sent by the topic agent.
+  // to a thread when set. agent_working is only ever sent by the thread agent.
+  // Client wake signal: sleep leaves spaces WebSockets half-open; the desktop
+  // calls this on powerMonitor resume so the server bounces every stream.
+  'spaces:bounceLive': {
+    req: z.null(),
+    res: z.object({ success: z.literal(true) }),
+  },
   'spaces:presence': {
     req: z.object({
       orgId: z.string(),
       spaceId: z.string(),
       state: z.enum(['viewing', 'typing', 'idle']),
-      topicId: z.string().optional(),
+      threadRootId: z.string().optional(),
+    }),
+    res: z.object({ success: z.literal(true) }),
+  },
+  // Ephemeral whiteboard traffic (scene diffs, cursors, idle) — fire-and-forget
+  // like presence: a frame sent while the org socket is down is silently
+  // dropped, and the collab loop's periodic full-scene rebroadcast heals the
+  // gap. The payload is opaque to the org (contract amendment 2026-08-31);
+  // its app-side vocabulary lives in shared/spaces.ts. Incoming whiteboard
+  // frames arrive on 'spaces:events' like every other live frame.
+  'spaces:whiteboard': {
+    req: z.object({
+      orgId: z.string(),
+      spaceId: z.string(),
+      /** The board's asset path — a board IS an asset (whiteboards/<name>.excalidraw). */
+      boardId: z.string(),
+      payload: z.custom<SpacesTypes.SpacesWhiteboardPayload>(),
     }),
     res: z.object({ success: z.literal(true) }),
   },
@@ -3851,4 +4126,12 @@ export function validateResponse<K extends keyof IPCChannels>(
 ): IPCChannels[K]['res'] {
   const schema = ipcSchemas[channel].res;
   return schema.parse(data) as IPCChannels[K]['res'];
+}
+
+/**
+ * Push channels (res schema is z.null()) flow server→client and map to the
+ * WebSocket event feed; invoke channels map to POST /rpc/{channel}.
+ */
+export function isPushChannel(channel: keyof IPCChannels): boolean {
+  return ipcSchemas[channel].res instanceof z.ZodNull;
 }

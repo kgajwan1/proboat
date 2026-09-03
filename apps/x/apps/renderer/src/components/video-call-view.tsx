@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff, Minimize2, MonitorUp, PhoneOff, Presentation, Square, User, Video, VideoOff } from 'lucide-react'
 
+import { pttKey } from '@x/shared'
+
 import { MascotFaceIcon, TalkingHead } from '@/components/talking-head'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { TTSState } from '@/hooks/useVoiceTTS'
+import { isMac } from '@/lib/shortcut'
 import { cn } from '@/lib/utils'
+
+// Hold-to-talk key: right ⌘ on macOS, right Ctrl elsewhere. Naming the wrong
+// key is worse than naming none — a ⌘ glyph on a PC keyboard points at a key
+// that isn't there.
+const PTT_LABEL = pttKey.pttKeyLabel(isMac)
 
 export type VideoCallStatus = 'idle' | 'listening' | 'thinking' | 'speaking'
 
@@ -45,8 +53,8 @@ interface VideoCallViewProps {
 }
 
 const STATUS_DISPLAY: Record<VideoCallStatus, { label: string; dotClass: string }> = {
-  idle: { label: 'Hold right ⌘ to talk · press & release it to go hands-free', dotClass: 'bg-neutral-500' },
-  listening: { label: 'Listening — release to send', dotClass: 'bg-green-500 animate-pulse' },
+  idle: { label: `Hold ${PTT_LABEL} to talk · press & release it to go hands-free`, dotClass: 'bg-neutral-500' },
+  listening: { label: 'Listening — release to send', dotClass: 'bg-[var(--rowboat-success)] animate-pulse' },
   thinking: { label: 'Thinking…', dotClass: 'bg-amber-400' },
   speaking: { label: 'Speaking', dotClass: 'bg-sky-400 animate-pulse' },
 }
@@ -106,7 +114,7 @@ export function VideoCallView({
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-neutral-950">
       {practiceMode && (
-        <span className="absolute left-4 top-4 z-10 flex items-center gap-1.5 rounded-full bg-violet-600/90 px-3 py-1 text-xs font-medium text-white">
+        <span className="absolute left-4 top-4 z-10 flex items-center gap-1.5 rounded-full bg-neutral-800 px-3 py-1 text-xs font-medium text-white/90">
           <Presentation className="h-3.5 w-3.5" />
           Practice session
         </span>
@@ -117,7 +125,7 @@ export function VideoCallView({
         <div
           className={cn(
             'relative flex items-center justify-center overflow-hidden rounded-2xl bg-neutral-900 transition-shadow',
-            userSpeaking && 'ring-2 ring-green-500/80'
+            userSpeaking && 'ring-2 ring-[var(--rowboat-success)]/80'
           )}
         >
           {cameraOn ? (
@@ -196,9 +204,12 @@ export function VideoCallView({
         )}
       </div>
 
-      {/* Control bar */}
-      <div className="flex items-center justify-center gap-4 pb-5">
-        <span className="flex h-10 items-center gap-2 rounded-full bg-neutral-800 px-4 text-xs font-medium text-white/90">
+      {/* Control bar. Wraps and lets the status chip shrink: seven round
+          buttons plus a full-sentence hint do not fit a 1366-wide (or merely
+          un-maximised) window, and an un-wrapped row pushed End call clean
+          off the screen edge. */}
+      <div className="flex flex-wrap items-center justify-center gap-3 px-4 pb-5">
+        <span className="flex h-10 min-w-0 max-w-full items-center gap-2 rounded-full bg-neutral-800 px-4 text-xs font-medium text-white/90">
           {/* Muted overrides the PTT hint — pressing to talk does nothing
               while muted. Thinking/speaking still show: output continues. */}
           {micMuted && (status === 'idle' || status === 'listening') ? (
@@ -208,18 +219,18 @@ export function VideoCallView({
             </>
           ) : pttStatus === 'locked' ? (
             <>
-              <span className="block h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              Hands-free — press right ⌘ again to send
+              <span className="block h-2 w-2 rounded-full bg-[var(--rowboat-success)] animate-pulse" />
+              Hands-free — press {PTT_LABEL} again to send
             </>
           ) : (
             <>
-              <span className={cn('block h-2 w-2 rounded-full', STATUS_DISPLAY[status].dotClass)} />
-              {STATUS_DISPLAY[status].label}
+              <span className={cn('block h-2 w-2 shrink-0 rounded-full', STATUS_DISPLAY[status].dotClass)} />
+              <span className="truncate">{STATUS_DISPLAY[status].label}</span>
             </>
           )}
         </span>
         {/* On-screen push-to-talk: hold to talk, quick tap to lock
-            hands-free — mirrors the Right ⌘ key. Pointer capture keeps the
+            hands-free — mirrors the talk key. Pointer capture keeps the
             release edge even if the cursor slides off mid-hold. */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -235,7 +246,7 @@ export function VideoCallView({
               className={cn(
                 'flex h-10 items-center gap-2 rounded-full px-4 text-sm font-medium transition-colors select-none',
                 pttStatus !== 'idle'
-                  ? 'bg-green-600 text-white hover:bg-green-500'
+                  ? 'bg-[var(--rowboat-success)] text-white hover:bg-[var(--rowboat-success)]/85'
                   : 'bg-neutral-800 text-white/90 hover:bg-neutral-700',
                 micMuted && 'opacity-50'
               )}
@@ -245,7 +256,7 @@ export function VideoCallView({
               {pttStatus === 'idle' ? 'Hold to talk' : pttStatus === 'locked' ? 'Tap to send' : 'Release to send'}
             </button>
           </TooltipTrigger>
-          <TooltipContent className="z-[110]">Hold to talk (tap to go hands-free) — or hold the right ⌘ key</TooltipContent>
+          <TooltipContent className="z-[110]">Hold to talk (tap to go hands-free) — or hold the {PTT_LABEL} key</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

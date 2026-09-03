@@ -153,7 +153,7 @@ All renderer events live in `apps/renderer/src/lib/analytics.ts` (typed wrappers
 - `spaces_message_deleted` — a human deleted (tombstoned) their own message
 - `spaces_topic_started` — replying to a general message created a new topic from it
 - `spaces_fold_requested` — "Fold into file…" asked the person's agent to fold a topic's decision into a file (the agent's resulting change is an `llm_usage` + a change-set on the org, not a renderer event)
-- `spaces_tab_viewed` — `{ tab: 'general' | 'topics' | 'files' }` — the segmented control inside a space
+- `spaces_tab_viewed` — `{ tab: 'general' | 'topics' | 'files' | 'whiteboard' }` — the segmented control inside a space (plus the whiteboard surface)
 
 The adoption metric for the chat-first spike is `spaces_message_posted` where `kind = general`, per day, vs. the team Slack channel.
 
@@ -218,6 +218,17 @@ The adoption metric for the chat-first spike is `spaces_message_posted` where `k
 - `settings_opened` — `{ tab }` — settings dialog opened (tab = the initial tab)
 - `settings_tab_changed` — `{ tab }`
 - `onboarding_completed` — the onboarding flow finished (`App.tsx`)
+
+### Mobile app events
+
+Captured by the iOS app (`apps/mobile/src/lib/analytics.ts`, typed wrappers like the renderer's). Every event carries `platform: 'mobile'`, the counterpart of desktop's `platform: 'desktop'`, so the shared project separates surfaces. The key is injected at build time via `EXPO_PUBLIC_POSTHOG_KEY` (`EXPO_PUBLIC_POSTHOG_HOST` optional); without it every call is a no-op — dev builds send nothing.
+
+- `mobile_paired` — `{ method: 'qr' | 'manual' | 'dev-link' }` — pairing with a rowboat-server succeeded
+- `mobile_unpaired` — `{ reason: 'user' | 'unauthorized' }` — `unauthorized` = the server key was rotated out from under the phone
+- `mobile_message_sent` — a chat message sent from the phone
+- `mobile_reconnected` — the WS feed recovered after a disconnect
+- `mobile_note_opened` — a note opened in the read-only browser
+- `mobile_voice_used` — reserved; fires once voice ships in the dev build
 
 ## Person properties
 

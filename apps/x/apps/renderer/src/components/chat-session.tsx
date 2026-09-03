@@ -57,7 +57,8 @@ export interface ChatSessionPaneProps {
   tabState: ChatTabViewState
   viewportAnchor: ChatViewportAnchorState | undefined
   onPickPrompt: (prompt: string) => void
-  isToolOpenForTab: (tabId: string, toolId: string) => boolean
+  /** `undefined` = no explicit choice; TurnConversation applies the per-tool default. */
+  isToolOpenForTab: (tabId: string, toolId: string) => boolean | undefined
   setToolOpenForTab: (tabId: string, toolId: string, open: boolean) => void
   /** Optional: without it, pending permission requests render no approve/deny card (side-pane chat may omit the handler). */
   onPermissionResponse?: (toolCallId: string, subflow: string[], response: 'approve' | 'deny') => void | Promise<void>
@@ -70,6 +71,8 @@ export interface ChatSessionPaneProps {
   onCodePermissionResponse?: (toolCallId: string, requestId: string, decision: PermissionDecision) => void | Promise<void>
   /** Notified when a ComposioConnectCard finishes connecting a toolkit. */
   onComposioConnected?: (toolkitSlug: string) => void
+  /** Empty-state flavour: 'code' for a chat bound to a coding session. */
+  emptyStateVariant?: 'default' | 'code'
 }
 
 export function ChatSessionPane({
@@ -87,6 +90,7 @@ export function ChatSessionPane({
   activeIsReasoning,
   onCodePermissionResponse,
   onComposioConnected,
+  emptyStateVariant = 'default',
 }: ChatSessionPaneProps) {
   // Content-owned tab meta (see lib/tab-meta.ts). Both live instances of a
   // chat (full-screen App pane + side-pane chat) report the same values, so
@@ -119,7 +123,7 @@ export function ChatSessionPane({
 
   const tabHasConversation = tabState.conversation.length > 0 || tabState.currentAssistantMessage
   const tabConversationContentClassName = cn(
-    'mx-auto w-full max-w-4xl',
+    'mx-auto w-full max-w-[820px] px-6',
     tabHasConversation ? 'pb-28' : 'pb-0',
     !tabHasConversation && 'min-h-full items-center justify-center',
   )
@@ -143,6 +147,7 @@ export function ChatSessionPane({
           {!tabHasConversation ? (
             <ChatEmptyState
               wide
+              variant={emptyStateVariant}
               onPickPrompt={onPickPrompt}
             />
           ) : (
@@ -353,7 +358,7 @@ export function ChatSessionComposer({
               >
                 {queuedMessageText(entry.message) || 'Attachment'}
               </button>
-              <span className="shrink-0 text-[10px] uppercase tracking-wider opacity-60">Queued</span>
+              <span className="shrink-0 text-[13px] text-muted-foreground">Queued</span>
               <button
                 type="button"
                 onClick={() => onRemoveQueued?.(entry.queueId)}

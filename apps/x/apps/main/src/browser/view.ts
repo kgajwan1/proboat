@@ -85,6 +85,9 @@ type BrowserTab = {
   view: WebContentsView;
   domReadyAt: number | null;
   loadError: string | null;
+  // Latest page-favicon-updated URL; webContents has no getter for it, so it
+  // must be cached here to survive into snapshotTabState.
+  favicon: string | null;
 };
 
 type CachedSnapshot = {
@@ -417,6 +420,38 @@ export class BrowserViewManager extends EventEmitter {
     const { id: tabId, view } = tab;
     const wc = view.webContents;
 
+    // The app's ⌥/⌃+Tab section switcher must keep working while this tab
+    // holds keyboard focus — guest keystrokes never reach the app renderer's
+    // listeners. Intercept the chord before the page can consume Tab and
+    // forward it to the app window (the dock's switcher listens for these).
+    wc.on('before-input-event', (event, input) => {
+      const host = this.window?.webContents;
+      if (!host || host.isDestroyed()) return;
+      const isCycleKey = input.key === 'Tab' || input.code === 'Backquote';
+      const modifier = input.alt || input.control;
+      const payload = {
+        key: input.key,
+        code: input.code ?? '',
+        alt: !!input.alt,
+        control: !!input.control,
+        shift: !!input.shift,
+      };
+      if (input.type === 'keyDown' && modifier && isCycleKey) {
+        event.preventDefault();
+        // Hand keyboard focus to the app window NOW: the switcher overlay is
+        // about to hide (detach) this view, and the rest of the chord — more
+        // Tabs, the modifier release that commits, Escape — must land in the
+        // app's listeners. A detached view's focus goes nowhere, which left
+        // the switcher stuck open on the first use.
+        host.focus();
+        host.send('shortcuts:switcherKey', { type: 'keyDown', ...payload });
+      } else if (input.type === 'keyUp' && (input.key === 'Alt' || input.key === 'Control')) {
+        host.send('shortcuts:switcherKey', { type: 'keyUp', ...payload });
+      } else if (input.type === 'keyDown' && input.key === 'Escape') {
+        host.send('shortcuts:switcherKey', { type: 'keyDown', ...payload });
+      }
+    });
+
     const reapplyBounds = () => {
       if (
         this.attachedTabId === tabId &&
@@ -433,10 +468,13 @@ export class BrowserViewManager extends EventEmitter {
       this.emitState();
     };
 
-    wc.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    wc.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       if (isMainFrame !== false) {
         tab.domReadyAt = null;
         tab.loadError = null;
+        // A real navigation invalidates the old page's icon; in-page
+        // navigations (hash/pushState) keep it.
+        if (!isInPlace) tab.favicon = null;
       }
       this.invalidateSnapshot(tabId);
       reapplyBounds();
@@ -468,6 +506,12 @@ export class BrowserViewManager extends EventEmitter {
       invalidateAndEmit();
     });
     wc.on('page-title-updated', this.emitState.bind(this));
+    wc.on('page-favicon-updated', (_event, favicons) => {
+      const favicon = favicons[0] ?? null;
+      if (tab.favicon === favicon) return;
+      tab.favicon = favicon;
+      this.emitState();
+    });
 
     this.wireWindowPolicy(wc);
   }
@@ -614,6 +658,7 @@ export class BrowserViewManager extends EventEmitter {
       id: tab.id,
       url: wc.getURL(),
       title: wc.getTitle(),
+      favicon: tab.favicon,
       canGoBack: wc.navigationHistory.canGoBack(),
       canGoForward: wc.navigationHistory.canGoForward(),
       loading: wc.isLoading(),
@@ -664,6 +709,7 @@ export class BrowserViewManager extends EventEmitter {
       view: this.createView(),
       domReadyAt: null,
       loadError: null,
+      favicon: null,
     };
 
     this.wireEvents(tab);
@@ -823,6 +869,18 @@ export class BrowserViewManager extends EventEmitter {
     this.visible = visible;
     if (visible) {
       this.ensureInitialTab();
+    } else {
+      // Hiding detaches the active view. If the page held keyboard focus,
+      // hand it back to the app window first — a detached view's focus is
+      // stranded (no key events reach anyone), which read as a stuck UI.
+      const attached = this.getTab(this.attachedTabId);
+      if (
+        attached?.view.webContents.isFocused() &&
+        this.window &&
+        !this.window.webContents.isDestroyed()
+      ) {
+        this.window.webContents.focus();
+      }
     }
     this.syncAttachedView();
   }
